@@ -8,7 +8,7 @@
 
 west:
   url: https://github.com/zephyrproject-rtos/west
-  version: v0.7.2
+  version: v1.0.0
 
 manifest:
   defaults:
@@ -28,7 +28,7 @@ manifest:
       repo-path: zephyr.git
       path: ecfwwork/zephyr_fork
       remote: zephyrproject
-      revision: v3.2.0
+      revision: f3fdb1f96fd8a9498ce0cd7a332dc6972e213a19
       clone-depth: 1
       west-commands: scripts/west-commands.yml
 
