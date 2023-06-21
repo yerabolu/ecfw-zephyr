@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../sandbox"
+		},
+		{
+			"path": "../../../zephyrproject/zephyr"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"pinctrl.h": "c"
+		}
+	}
+}

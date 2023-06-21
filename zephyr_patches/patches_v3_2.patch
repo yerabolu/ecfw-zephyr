@@ -21,10 +21,10 @@ index f04c910fe1..1a3c65d9f3 100644
 +++ b/drivers/espi/espi_mchp_xec.c
 @@ -1371,6 +1371,7 @@ static void espi_xec_vw_isr(const struct device *dev)
  	uint32_t girq_result;
- 
+
  	girq_result = MCHP_GIRQ_RESULT(config->vw_girq_ids[0]);
 +	MCHP_GIRQ_SRC(config->vw_girq_ids[0]) = girq_result;
- 
+
  	for (int i = 0; i < m2s_vwires_isr_cnt; i++) {
  		struct espi_isr entry = m2s_vwires_isr[i];
 @@ -1381,8 +1382,6 @@ static void espi_xec_vw_isr(const struct device *dev)
@@ -34,9 +34,9 @@ index f04c910fe1..1a3c65d9f3 100644
 -
 -	REG32(MCHP_GIRQ_SRC_ADDR(config->vw_girq_ids[0])) = girq_result;
  }
- 
+
  #if DT_INST_PROP_HAS_IDX(0, vw_girqs, 1)
--- 
+--
 2.34.1
 
 
@@ -70,7 +70,7 @@ index 1a3c65d9f3..027c1b1033 100644
 --- a/drivers/espi/espi_mchp_xec.c
 +++ b/drivers/espi/espi_mchp_xec.c
 @@ -434,7 +434,26 @@ static int espi_xec_write_lpc_request(const struct device *dev,
- 
+
  	return 0;
  }
 +static int espi_xec_send_ltr(const struct device *dev, struct ltr_cfg_pkt *req)
@@ -87,7 +87,7 @@ index 1a3c65d9f3..027c1b1033 100644
 +		/* set infinite latency tolrated */
 +		ESPI_LTR_REGS->LTR_MSG = MCHP_ESPI_LTR_MSG_REQ_INF;
 +	}
- 
+
 +	/* Send LTR Packet */
 +	ESPI_LTR_REGS->LTR_CTRL = MCHP_ESPI_LTR_CTRL_START;
 +
@@ -104,12 +104,12 @@ index 1a3c65d9f3..027c1b1033 100644
 +				  .evt_details = ESPI_CHANNEL_PERIPHERAL,
 +				  .evt_data = 0 };
 +	struct espi_xec_data *data = (struct espi_xec_data *)(dev->data);
- 
+
  	if (status & MCHP_ESPI_PC_STS_EN_CHG) {
  		if (status & MCHP_ESPI_PC_STS_EN) {
 @@ -972,6 +995,13 @@ static void espi_pc_isr(const struct device *dev)
  		}
- 
+
  		ESPI_PC_REGS->PC_STATUS = MCHP_ESPI_PC_STS_EN_CHG;
 +	} else if (status & MCHP_ESPI_PC_STS_BM_EN_CHG) {
 +		if (status & MCHP_ESPI_PC_STS_BM_EN) {
@@ -120,14 +120,14 @@ index 1a3c65d9f3..027c1b1033 100644
 +		ESPI_PC_REGS->PC_STATUS = MCHP_ESPI_PC_STS_BM_EN_CHG;
  	}
  }
- 
+
 @@ -1453,6 +1483,7 @@ static const struct espi_driver_api espi_xec_driver_api = {
  	.manage_callback = espi_xec_manage_callback,
  	.read_lpc_request = espi_xec_read_lpc_request,
  	.write_lpc_request = espi_xec_write_lpc_request,
 +	.send_ltr = espi_xec_send_ltr,
  };
- 
+
  static struct espi_xec_data espi_xec_data;
 @@ -1526,8 +1557,11 @@ static int espi_xec_init(const struct device *dev)
  	/* Clear reset interrupt status and enable interrupts */
@@ -140,7 +140,7 @@ index 1a3c65d9f3..027c1b1033 100644
 +	ESPI_PC_REGS->PC_IEN |= MCHP_ESPI_PC_IEN_EN_CHG |
 +				MCHP_ESPI_PC_IEN_BM_EN_CHG;
 +
- 
+
  	/* Enable VWires interrupts */
  	for (int i = 0; i < sizeof(vw_wires_int_en); i++) {
 diff --git a/include/zephyr/drivers/espi.h b/include/zephyr/drivers/espi.h
@@ -150,7 +150,7 @@ index e16ebca5ab..6a37b7ff65 100644
 @@ -115,6 +115,20 @@ enum espi_bus_event {
  	ESPI_BUS_PERIPHERAL_NOTIFICATION    = BIT(4),
  };
- 
+
 +/**
 + * @brief eSPI LTR Scale
 + *
@@ -171,7 +171,7 @@ index e16ebca5ab..6a37b7ff65 100644
 @@ -359,6 +373,18 @@ struct espi_flash_packet {
  	uint16_t len;
  };
- 
+
 +/**
 + * @brief eSPI LTR configuration parameters
 + */
@@ -185,7 +185,7 @@ index e16ebca5ab..6a37b7ff65 100644
 +};
 +
  struct espi_callback;
- 
+
  /**
 @@ -421,6 +447,8 @@ typedef int (*espi_api_lpc_read_request)(const struct device *dev,
  typedef int (*espi_api_lpc_write_request)(const struct device *dev,
@@ -207,7 +207,7 @@ index e16ebca5ab..6a37b7ff65 100644
 @@ -674,6 +703,37 @@ static inline int z_impl_espi_write_lpc_request(const struct device *dev,
  	return api->write_lpc_request(dev, op, data);
  }
- 
+
 +
 +/**
 + * @brief Send LTR request to eSPI host which generates an eSPI transaction.
@@ -242,7 +242,7 @@ index e16ebca5ab..6a37b7ff65 100644
  /**
   * @brief Sends system/platform signal as a virtual wire packet.
   *
--- 
+--
 2.34.1
 
 
@@ -287,7 +287,7 @@ index b220461649..2f594e415d 100644
 @@ -4,8 +4,6 @@
  # SPDX-License-Identifier: Apache-2.0
  #
- 
+
 -zephyr_library()
 -
  if(DEFINED ENV{MEC172X_SPI_GEN})
@@ -864,7 +864,7 @@ index 0000000000..9b0d207282
 +Comp1WritCmdByte = 0x11
 +Comp1DrvValue = 0x20
 +Comp1DrvMask = 0x60
--- 
+--
 2.34.1
 
 
@@ -910,7 +910,7 @@ index a8731704a8..42a9e5b57e 100644
  		break;
  	case MCHP_XEC_PCR_CLK_BUS:
  	case MCHP_XEC_PCR_CLK_PERIPH:
--- 
+--
 2.34.1
 
 
@@ -938,10 +938,10 @@ index d17e9dde53..4baa4bea56 100644
 @@ -28,6 +28,8 @@ LOG_MODULE_REGISTER(spi_xec, CONFIG_SPI_LOG_LEVEL);
  #include <zephyr/sys/printk.h>
  #endif
- 
+
 +/* common clock control device node for all Microchip XEC chips */
 +#define MCHP_XEC_CLOCK_CONTROL_NODE	DT_NODELABEL(pcr)
- 
+
  /* spin loops waiting for HW to clear soft reset bit */
  #define XEC_QMSPI_SRST_LOOPS		16
 @@ -90,6 +92,7 @@ struct spi_qmspi_config {
@@ -955,7 +955,7 @@ index d17e9dde53..4baa4bea56 100644
 @@ -158,36 +161,42 @@ static void qmspi_reset(struct qmspi_regs *regs)
  	regs->TM_TAPS_CTRL = taps[2];
  }
- 
+
 -/*
 - * Calculate 8-bit QMSPI frequency divider register field value.
 - * QMSPI input clock is MCHP_QMSPI_INPUT_CLOCK_FREQ_HZ.
@@ -968,7 +968,7 @@ index d17e9dde53..4baa4bea56 100644
  {
 -	uint32_t fdiv = 1;
 +	struct spi_qmspi_data *qdata = dev->data;
- 
+
 -	if (freq_hz < (MCHP_QMSPI_INPUT_CLOCK_FREQ_HZ / 256u)) {
 -		fdiv = 0; /* HW fdiv of 0 -> divide by 256 */
 -	} else if (freq_hz < MCHP_QMSPI_INPUT_CLOCK_FREQ_HZ) {
@@ -976,11 +976,11 @@ index d17e9dde53..4baa4bea56 100644
 +	if (freq_hz == 0u) {
 +		return 0u; /* maximum frequency divider */
  	}
- 
+
 -	return fdiv;
 +	return (qdata->base_freq_hz / freq_hz);
  }
- 
+
 -/* Program QMSPI frequency divider field in mode register */
 -static void qmspi_set_frequency(struct qmspi_regs *regs, uint32_t freq_hz)
 +/* Program QMSPI frequency divider field in the mode register.
@@ -1004,17 +1004,17 @@ index d17e9dde53..4baa4bea56 100644
 +				    (clock_control_subsys_t)clkss, &clock)) {
 +		fdiv = clock / freq_hz;
 +	}
- 
+
 -	fdiv = qmspi_encoded_fdiv(freq_hz);
 +	regs->MODE = ((regs->MODE & ~(MCHP_QMSPI_M_FDIV_MASK)) |
 +		((fdiv << MCHP_QMSPI_M_FDIV_POS) & MCHP_QMSPI_M_FDIV_MASK));
- 
+
 -	qmode = regs->MODE & ~(MCHP_QMSPI_M_FDIV_MASK);
 -	qmode |= (fdiv << MCHP_QMSPI_M_FDIV_POS) & MCHP_QMSPI_M_FDIV_MASK;
 -	regs->MODE = qmode;
 +	return 0;
  }
- 
+
  /*
 @@ -364,7 +373,7 @@ static int qmspi_configure(const struct device *dev,
  	/* CS1 alternate mode (frequency) */
@@ -1022,7 +1022,7 @@ index d17e9dde53..4baa4bea56 100644
  	if (cfg->cs1_freq) {
 -		uint32_t fdiv = qmspi_encoded_fdiv(cfg->cs1_freq);
 +		uint32_t fdiv = qmspi_encoded_fdiv(dev, cfg->cs1_freq);
- 
+
  		regs->MODE_ALT1 = (fdiv << MCHP_QMSPI_MA1_CS1_CDIV_POS) &
  				  MCHP_QMSPI_MA1_CS1_CDIV_MSK;
 @@ -1087,7 +1096,12 @@ static int qmspi_xec_init(const struct device *dev)
@@ -1041,19 +1041,19 @@ index d17e9dde53..4baa4bea56 100644
 @@ -1097,6 +1111,11 @@ static int qmspi_xec_init(const struct device *dev)
  	qdata->xfr_len = 0;
  #endif
- 
+
 +	if (!device_is_ready(pcr_dev)) {
 +		LOG_ERR("%s PCR device not ready", pcr_dev->name);
 +		return -ENODEV;
 +	}
 +
  	z_mchp_xec_pcr_periph_sleep(cfg->pcr_idx, cfg->pcr_pos, 0);
- 
+
  	ret = pinctrl_apply_state(cfg->pcfg, PINCTRL_STATE_DEFAULT);
 @@ -1105,6 +1124,12 @@ static int qmspi_xec_init(const struct device *dev)
  		return ret;
  	}
- 
+
 +	ret = clock_control_get_rate(pcr_dev, (clock_control_subsys_t)clkss, &qdata->base_freq_hz);
 +	if (ret) {
 +		LOG_ERR("QSPI clock control failed");
@@ -1062,7 +1062,7 @@ index d17e9dde53..4baa4bea56 100644
 +
  	qmspi_reset(regs);
  	mchp_xec_ecia_girq_src_clr(cfg->girq, cfg->girq_pos);
- 
+
 diff --git a/dts/arm/microchip/mec172xnsz.dtsi b/dts/arm/microchip/mec172xnsz.dtsi
 index 3e3581d1ab..19eac691fa 100644
 --- a/dts/arm/microchip/mec172xnsz.dtsi
@@ -1087,7 +1087,7 @@ index cb2be6eed4..496c0f5238 100644
 -#define MCHP_QMSPI_M_FDIV_MASK		0x00ff0000u
 +#define MCHP_QMSPI_M_FDIV_MASK0		0xffffu
 +#define MCHP_QMSPI_M_FDIV_MASK		0xffff0000u
- 
+
  /* Control/Descriptors */
  #define MCHP_QMSPI_C_IFM_MASK		0x03u
 @@ -197,6 +197,7 @@
@@ -1098,7 +1098,7 @@ index cb2be6eed4..496c0f5238 100644
  #define MCHP_QMSPI_C_CLOSE_POS		9u
  #define MCHP_QMSPI_C_NO_CLOSE		0u
  #define MCHP_QMSPI_C_CLOSE		BIT(MCHP_QMSPI_C_CLOSE_POS)
--- 
+--
 2.34.1
 
 
@@ -1183,7 +1183,7 @@ index 19eac691fa..d6c624e556 100644
  				girqs = < MCHP_XEC_ECIA(21, 8, 13, 119)
  					  MCHP_XEC_ECIA(21, 9, 13, 120) >;
  				pcrs = <2 18>;
--- 
+--
 2.34.1
 
 
@@ -1216,9 +1216,9 @@ index 343ce9394f..caac8aafaf 100644
  #include "../common/soc_espi_channels.h"
 -#include "../common/soc_espi_saf.h"
 +#include "soc_espi_saf_v1.h"
- 
+
  #endif
- 
+
 diff --git a/soc/arm/microchip_mec/common/soc_espi_saf.h b/soc/arm/microchip_mec/mec1501/soc_espi_saf_v1.h
 similarity index 98%
 rename from soc/arm/microchip_mec/common/soc_espi_saf.h
@@ -1229,16 +1229,16 @@ index d1a3a31d53..c13ba76c2e 100644
 @@ -265,9 +265,9 @@
  		 MCHP_QMSPI_C_XFR_UNITS_1 | MCHP_QMSPI_C_XFR_NUNITS(3) | \
  		 MCHP_QMSPI_C_DESCR_LAST)
- 
+
 -#define MCHP_W25Q256_OPA SAF_OPCODE_REG_VAL(0x06U, 0x75U, 0x7aU, 0x05U)
 -#define MCHP_W25Q256_OPB SAF_OPCODE_REG_VAL(0x20U, 0x52U, 0xd8U, 0x02U)
 -#define MCHP_W25Q256_OPC SAF_OPCODE_REG_VAL(0xebU, 0xffU, 0xa5U, 0x35U)
 +#define MCHP_W25Q256_OPA MCHP_SAF_OPCODE_REG_VAL(0x06U, 0x75U, 0x7aU, 0x05U)
 +#define MCHP_W25Q256_OPB MCHP_SAF_OPCODE_REG_VAL(0x20U, 0x52U, 0xd8U, 0x02U)
 +#define MCHP_W25Q256_OPC MCHP_SAF_OPCODE_REG_VAL(0xebU, 0xffU, 0xa5U, 0x35U)
- 
+
  #define MCHP_W25Q256_POLL2_MASK 0xff7fU
- 
+
 diff --git a/soc/arm/microchip_mec/mec172x/soc.h b/soc/arm/microchip_mec/mec172x/soc.h
 index 907ba7a077..2841a190ff 100644
 --- a/soc/arm/microchip_mec/mec172x/soc.h
@@ -1249,9 +1249,9 @@ index 907ba7a077..2841a190ff 100644
  #include "../common/soc_espi_channels.h"
 -#include "../common/soc_espi_saf.h"
  #include "../common/soc_i2c.h"
- 
+
  #endif
--- 
+--
 2.34.1
 
 
@@ -1276,10 +1276,10 @@ index 440bf315a4..a3f8ae7476 100644
 -	port-sel = <0>; /* Shared SPI */
 +	chip_select = <0>;
 +	port_sel = <0>; /* Shared SPI */
- 
+
  	pinctrl-0 = < &shd_cs0_n_gpio055
  		      &shd_clk_gpio056
--- 
+--
 2.34.1
 
 
@@ -1316,7 +1316,7 @@ index 9b0d207282..e7afca5d2b
  SpiSlewFast = false
  SpiSignalControl = 0x00
  FwBinFile = zephyr.bin
--- 
+--
 2.34.1
 
 
@@ -1372,18 +1372,18 @@ index 3c4de413c8..f8ee937af5 100644
 --- a/drivers/espi/Kconfig
 +++ b/drivers/espi/Kconfig
 @@ -12,8 +12,6 @@ if ESPI
- 
+
  source "drivers/espi/Kconfig.xec"
- 
+
 -source "drivers/espi/Kconfig.xec_v2"
 -
  source "drivers/espi/Kconfig.npcx"
- 
+
  source "drivers/espi/Kconfig.espi_emul"
 @@ -178,4 +176,19 @@ config ESPI_OOB_CHANNEL_RX_ASYNC
  	  Enables asynchronous handling for host-initiated OOB traffic.
  	  Otherwise OOB traffic is assumed to be always client-initiated.
- 
+
 +config ESPI_SAF
 +	bool "ESPI SAF driver"
 +	depends on ESPI_FLASH_CHANNEL
@@ -1405,14 +1405,14 @@ index b6fde723b7..585731dbdd 100644
 --- a/drivers/espi/Kconfig.xec
 +++ b/drivers/espi/Kconfig.xec
 @@ -5,11 +5,17 @@
- 
+
  config ESPI_XEC
  	bool "XEC Microchip ESPI driver"
 -	depends on SOC_SERIES_MEC1501X
 +	depends on DT_HAS_MICROCHIP_XEC_ESPI_SAF_ENABLED
  	help
  	  Enable the Microchip XEC ESPI driver for MEC15xx family.
- 
+
 -if ESPI_XEC
 +config ESPI_XEC_V2
 +	bool "XEC Microchip ESPI V2 driver"
@@ -1421,13 +1421,13 @@ index b6fde723b7..585731dbdd 100644
 +	  Enable the Microchip XEC ESPI driver for MEC172x series.
 +
 +if ESPI_XEC || ESPI_XEC_V2
- 
+
  config ESPI_OOB_CHANNEL
  	default y
 @@ -55,6 +61,93 @@ config ESPI_FLASH_BUFFER_SIZE
  	  Use maximum RAM buffer size defined by spec but allow applications
  	  to override if eSPI host doesn't support it.
- 
+
 +config ESPI_SAF_XEC
 +	bool "XEC Microchip ESPI SAF driver"
 +	depends on SOC_SERIES_MEC1501X
@@ -1521,7 +1521,7 @@ index b6fde723b7..585731dbdd 100644
 @@ -69,4 +162,26 @@ config ESPI_SAF_INIT_PRIORITY
  	help
  	  Driver initialization priority for eSPI SAF driver.
- 
+
 -endif #ESPI_XEC
 +config ESPI_PERIPHERAL_ACPI_EC_IBF_EVT_DATA
 +	bool "Read ACPI EC Event Data in IBF ISR"
@@ -2932,7 +2932,7 @@ index d6c624e556..619d0f1b0b 100644
 -			#address-cells = <1>;
 -			#size-cells = <0>;
  			status = "disabled";
- 
+
 +			espi_saf0: espi_saf@40008000 {
 +				compatible = "microchip,xec-espi-saf-v2";
 +				reg = <0x40008000 0x400>, <0x40070000 0x400>,
@@ -3029,7 +3029,7 @@ index 6a37b7ff65..842b3deab0 100644
  	ESPI_BUS_PERIPHERAL_NOTIFICATION    = BIT(4),
 +	ESPI_BUS_SAF_NOTIFICATION           = BIT(5),
  };
- 
+
  /**
 diff --git a/soc/arm/microchip_mec/mec1501/Kconfig.defconfig.mec1501hsz b/soc/arm/microchip_mec/mec1501/Kconfig.defconfig.mec1501hsz
 index efe2e01973..5ee1c0e2ab 100644
@@ -3038,7 +3038,7 @@ index efe2e01973..5ee1c0e2ab 100644
 @@ -19,6 +19,14 @@ config ESPI_XEC
  	default y
  	depends on ESPI
- 
+
 +config ESPI_SAF_XEC
 +	default y
 +	depends on ESPI_SAF
@@ -3057,7 +3057,7 @@ index b8ea53f49a..758652fd31 100644
 @@ -23,4 +23,12 @@ config EEPROM_XEC
  	default y
  	depends on EEPROM
- 
+
 +config ESPI_SAF_XEC_V2
 +	default y
 +	depends on ESPI_SAF
@@ -3073,7 +3073,7 @@ index b69e868ddc..006010bdb0 100644
 +++ b/soc/arm/microchip_mec/mec172x/reg/mec172x_espi_saf.h
 @@ -36,30 +36,40 @@
  /* Register bit definitions */
- 
+
  /* SAF EC Portal Command register */
 -#define MCHP_SAF_ECP_CMD_OFS		0x18u
 -#define MCHP_SAF_ECP_CMD_MASK		0xff00ffffu
@@ -3131,7 +3131,7 @@ index b69e868ddc..006010bdb0 100644
 +#define MCHP_SAF_ECP_CMD_RPMC_OP2_CS0		0x04u
 +#define MCHP_SAF_ECP_CMD_RPMC_OP1_CS1		0x83u
 +#define MCHP_SAF_ECP_CMD_RPMC_OP2_CS1		0x84u
- 
+
  /* SAF EC Portal Flash Address register */
  #define MCHP_SAF_ECP_FLAR_OFS		0x1cu
 @@ -68,6 +78,7 @@
@@ -3140,7 +3140,7 @@ index b69e868ddc..006010bdb0 100644
  #define MCHP_SAF_ECP_START_MASK		0x01u
 +#define MCHP_SAF_ECP_START_POS		0
  #define MCHP_SAF_ECP_START		BIT(0)
- 
+
  /* SAF EC Portal Buffer Address register */
 @@ -78,6 +89,15 @@
  #define MCHP_SAF_ECP_STS_OFS		0x28u
@@ -3164,11 +3164,11 @@ index b69e868ddc..006010bdb0 100644
  #define MCHP_SAF_ECP_INTEN_MASK		0x01u
 +#define MCHP_SAF_ECP_INTEN_DONE_POS	0
  #define MCHP_SAF_ECP_INTEN_DONE		BIT(0)
- 
+
  /* SAF Flash Configuration Size Limit register */
 @@ -102,40 +123,46 @@
  #define MCHP_SAF_FL_CFG_THRH_MASK	0xffffffffu
- 
+
  /* SAF Flash Configuration Miscellaneous register */
 -#define MCHP_SAF_FL_CFG_MISC_OFS	0x38u
 -#define MCHP_SAF_FL_CFG_MISC_MASK	0x000030f3u
@@ -3231,7 +3231,7 @@ index b69e868ddc..006010bdb0 100644
 +#define MCHP_SAF_ESPI_MON_STS_IEN_AV		BIT(2)
 +#define MCHP_SAF_ESPI_MON_STS_IEN_BND_4K	BIT(3)
 +#define MCHP_SAF_ESPI_MON_STS_IEN_ERSZ		BIT(4)
- 
+
  /* SAF EC Portal Busy register */
  #define MCHP_SAF_ECP_BUSY_OFS		0x44u
  #define MCHP_SAF_ECP_BUSY_MASK		0x01u
@@ -3240,11 +3240,11 @@ index b69e868ddc..006010bdb0 100644
 +#define MCHP_SAF_ECP_EC1_BUSY_POS	1
 +#define MCHP_SAF_ECP_EC0_BUSY		BIT(0)
 +#define MCHP_SAF_ECP_EC1_BUSY		BIT(1)
- 
+
  /* SAF CS0/CS1 Opcode A registers */
  #define MCHP_SAF_CS0_OPA_OFS		0x4cu
 @@ -444,7 +471,64 @@
- 
+
  /* SAF DnX Protection Bypass register */
  #define MCHP_SAF_DNX_PROT_BYP_OFS	0x1b4u
 -#define MCHP_SAF_DNX_PROT_BYP_MASK	0xffffffffu
@@ -3306,7 +3306,7 @@ index b69e868ddc..006010bdb0 100644
 +#define SAF_RPMC_OP2_EC0_RES_OFS	0x20cu
 +#define SAF_RPMC_OP2_EC1_RES_OFS	0x210u
 +#define	SAF_RPMC_OP2_RES_REG_MSK	0xffffffffu
- 
+
  /* SAF Communication Mode */
  #define MCHP_SAF_COMM_MODE_MASK		0x01u
 @@ -496,36 +580,48 @@ struct mchp_espi_saf_pr {
@@ -3385,7 +3385,7 @@ index b69e868ddc..006010bdb0 100644
 +	volatile uint32_t SAF_RPMC_OP2_EC0_RES;		/* 0x20c */
 +	volatile uint32_t SAF_RPMC_OP2_EC1_RES;		/* 0x210 */
  };
- 
+
  struct mchp_espi_saf_comm { /* @ 0x40071000 */
 diff --git a/soc/arm/microchip_mec/mec172x/reg/mec172x_qspi.h b/soc/arm/microchip_mec/mec172x/reg/mec172x_qspi.h
 index 496c0f5238..fa04a2da01 100644
@@ -3408,7 +3408,7 @@ index 496c0f5238..fa04a2da01 100644
 +#define MCHP_QMSPI_C_RX_LDMA_CH0	SHLU32(1u, MCHP_QMSPI_C_RX_DMA_POS)
 +#define MCHP_QMSPI_C_RX_LDMA_CH1	SHLU32(2u, MCHP_QMSPI_C_RX_DMA_POS)
 +#define MCHP_QMSPI_C_RX_lDMA_CH2	SHLU32(3u, MCHP_QMSPI_C_RX_DMA_POS)
- 
+
  #define MCHP_QMSPI_C_CLOSE_POS		9u
  #define MCHP_QMSPI_C_NO_CLOSE		0u
 diff --git a/soc/arm/microchip_mec/mec172x/soc.h b/soc/arm/microchip_mec/mec172x/soc.h
@@ -3418,12 +3418,12 @@ index 2841a190ff..134363fc6d 100644
 @@ -283,6 +283,9 @@ typedef enum {
  #include "../common/soc_espi_channels.h"
  #include "../common/soc_i2c.h"
- 
+
 +/* MEC172x SAF V2 */
 +#include "soc_espi_saf_v2.h"
 +
  #endif
- 
+
  #endif
 diff --git a/soc/arm/microchip_mec/mec172x/soc_espi_saf_v2.h b/soc/arm/microchip_mec/mec172x/soc_espi_saf_v2.h
 new file mode 100644
@@ -3947,7 +3947,7 @@ index 0000000000..d4fa144aec
 +};
 +
 +#endif /* _SOC_ESPI_SAF_H_ */
--- 
+--
 2.34.1
 
 
@@ -3976,7 +3976,7 @@ index 6bd74b7afd..4d8f390d87 100644
 +++ b/drivers/pinctrl/pinctrl_mchp_xec.c
 @@ -10,142 +10,7 @@
  #define DT_DRV_COMPAT microchip_xec_pinctrl
- 
+
  #include <zephyr/drivers/pinctrl.h>
 -
 -/** @brief All GPIO register as arrays of registers */
@@ -4115,7 +4115,7 @@ index 6bd74b7afd..4d8f390d87 100644
 -
 -#define SHLU32(v, n)			((uint32_t)(v) << (n))
 +#include <soc.h>
- 
+
  /* Microchip XEC: each GPIO pin has two 32-bit control register.
   * The first 32-bit register contains all pin features except
 diff --git a/soc/arm/microchip_mec/common/reg/mec_gpio.h b/soc/arm/microchip_mec/common/reg/mec_gpio.h
@@ -4157,19 +4157,19 @@ index caac8aafaf..9e24d1e404 100644
 @@ -14,12 +14,16 @@
  #include "MEC1501hsz.h"
  #include "regaccess.h"
- 
+
 +/* common SoC API */
  #include "../common/soc_dt.h"
  #include "../common/soc_gpio.h"
  #include "../common/soc_pins.h"
  #include "../common/soc_espi_channels.h"
  #include "soc_espi_saf_v1.h"
- 
+
 +/* common peripheral register defines */
 +#include "../common/reg/mec_gpio.h"
 +
  #endif
- 
+
  #endif
 diff --git a/soc/arm/microchip_mec/mec172x/reg/mec172x_gpio.h b/soc/arm/microchip_mec/mec172x/reg/mec172x_gpio.h
 index 8cb981fcad..82b53c4af0 100644
@@ -4178,7 +4178,7 @@ index 8cb981fcad..82b53c4af0 100644
 @@ -393,19 +393,6 @@ enum mchp_gpio_drv_str {
  	MCHP_GPIO_DRV_STR_12MA,
  };
- 
+
 -/** @brief All GPIO register as arrays of registers */
 -struct gpio_regs {
 -	volatile uint32_t  CTRL[174];
@@ -4204,10 +4204,10 @@ index 134363fc6d..3bf4f533fd 100644
  #include "../common/reg/mec_vci.h"
  #include "../common/reg/mec_wdt.h"
 +#include "../common/reg/mec_gpio.h"
- 
+
  /* common SoC API */
  #include "../common/soc_dt.h"
--- 
+--
 2.34.1
 
 
@@ -4239,7 +4239,7 @@ index 872cc86570..33f6dc06d3 100644
 +	pinctrl-0 = <&uart1_tx_gpio170 &uart1_rx_gpio171>;
 +	pinctrl-names = "default";
  };
- 
+
  &adc0 {
 diff --git a/boards/arm/mec15xxevb_assy6853/mec15xxevb_assy6853.dts b/boards/arm/mec15xxevb_assy6853/mec15xxevb_assy6853.dts
 index d7a67f353a..1ac1439bdc 100644
@@ -4252,7 +4252,7 @@ index d7a67f353a..1ac1439bdc 100644
 +	pinctrl-0 = <&uart2_tx_gpio146 &uart2_rx_gpio145>;
 +	pinctrl-names = "default";
  };
- 
+
  &adc0 {
 diff --git a/drivers/serial/uart_mchp_xec.c b/drivers/serial/uart_mchp_xec.c
 index 8a7b74eea8..bc7859aad4 100644
@@ -4270,7 +4270,7 @@ index 8a7b74eea8..bc7859aad4 100644
  #include <zephyr/drivers/uart.h>
  #include <zephyr/sys/sys_io.h>
  #include <zephyr/spinlock.h>
- 
+
 -BUILD_ASSERT(IS_ENABLED(CONFIG_SOC_SERIES_MEC172X),
 -	     "XEC UART driver only support MEC172x at this time");
 -
@@ -4278,9 +4278,9 @@ index 8a7b74eea8..bc7859aad4 100644
  #define XEC_UART_CLK_SRC_1P8M		0
  /* Clock source is PLL 48 MHz output */
 @@ -195,6 +194,56 @@ struct uart_xec_dev_data {
- 
+
  static const struct uart_driver_api uart_xec_driver_api;
- 
+
 +#ifdef CONFIG_SOC_SERIES_MEC172X
 +
 +static void uart_clr_slp_en(const struct device *dev)
@@ -4337,14 +4337,14 @@ index 8a7b74eea8..bc7859aad4 100644
 @@ -363,11 +412,7 @@ static int uart_xec_init(const struct device *dev)
  	struct uart_xec_dev_data *dev_data = dev->data;
  	int ret;
- 
+
 -	ret = z_mchp_xec_pcr_periph_sleep(dev_cfg->pcr_idx,
 -					  dev_cfg->pcr_bitpos, 0);
 -	if (ret != 0) {
 -		return ret;
 -	}
 +	uart_clr_slp_en(dev);
- 
+
  	ret = pinctrl_apply_state(dev_cfg->pcfg, PINCTRL_STATE_DEFAULT);
  	if (ret != 0) {
 @@ -750,7 +795,6 @@ static void uart_xec_irq_callback_set(const struct device *dev,
@@ -4353,16 +4353,16 @@ index 8a7b74eea8..bc7859aad4 100644
  {
 -	const struct uart_xec_device_config * const dev_cfg = dev->config;
  	struct uart_xec_dev_data * const dev_data = dev->data;
- 
+
  	if (dev_data->cb) {
 @@ -758,7 +802,7 @@ static void uart_xec_isr(const struct device *dev)
  	}
- 
+
  	/* clear ECIA GIRQ R/W1C status bit after UART status cleared */
 -	mchp_xec_ecia_girq_src_clr(dev_cfg->girq_id, dev_cfg->girq_pos);
 +	uart_xec_girq_clr(dev);
  }
- 
+
  #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
 @@ -862,7 +906,7 @@ static const struct uart_driver_api uart_xec_driver_api = {
  			    uart_xec_isr, DEVICE_DT_INST_GET(n),	\
@@ -4419,8 +4419,8 @@ index 85d02eb494..16e6e63194 100644
 +			ldn = <11>;
  			status = "disabled";
  		};
- 
--- 
+
+--
 2.34.1
 
 
@@ -4453,7 +4453,7 @@ index f4382b1a64..3eec5889e7 100644
 @@ -15,6 +16,8 @@
  #define MCHP_GCFG_DID_DEV_ID_MEC150x    0x0020U
  #define MCHP_TRIM_ENABLE_INT_OSCILLATOR 0x06U
- 
+
 +#define TEST_CLK_OUT_PIN_COUNT		1
 +
  /*
@@ -4462,7 +4462,7 @@ index f4382b1a64..3eec5889e7 100644
 @@ -130,9 +133,36 @@ static int soc_ecia_init(void)
  	return 0;
  }
- 
+
 +static void configure_debug_interface(void)
 +{
 +	/* No debug support */
@@ -4493,13 +4493,13 @@ index f4382b1a64..3eec5889e7 100644
 +#ifdef CONFIG_SOC_MEC1501_TEST_CLK_OUT
 +	const pinctrl_soc_pin_t test_clk_out_pin = {MCHP_XEC_PINMUX(060, MCHP_AF2), 0};
 +#endif
- 
+
  	ARG_UNUSED(dev);
- 
+
 @@ -154,6 +184,25 @@ static int soc_init(const struct device *dev)
- 
+
  	soc_ecia_init();
- 
+
 +	/* Configure GPIO bank before usage
 +	 * VTR1 is not configurable
 +	 * VTR2 doesn't need configuration if setting VTR2_STRAP
@@ -4522,7 +4522,7 @@ index f4382b1a64..3eec5889e7 100644
  	if (!isave) {
  		__enable_irq();
  	}
--- 
+--
 2.34.1
 
 
@@ -4549,13 +4549,13 @@ index fff0abe74b..d97f85d855 100644
  	const struct peci_xec_config * const cfg = dev->config;
  	struct peci_regs * const regs = cfg->regs;
 +	struct ecs_regs * const ecs_regs = (struct ecs_regs *)(DT_REG_ADDR(DT_NODELABEL(ecs)));
- 
+
  #ifdef CONFIG_PINCTRL
  	int ret = pinctrl_apply_state(cfg->pcfg, PINCTRL_STATE_DEFAULT);
 @@ -458,6 +459,8 @@ static int peci_xec_init(const struct device *dev)
- 
+
  	peci_clr_slp_en(dev);
- 
+
 +	ecs_regs->PECI_DIS = 0x00u;
 +
  	/* Reset PECI interface */
@@ -4567,7 +4567,7 @@ index 16e6e63194..733a604de5 100644
 +++ b/dts/arm/microchip/mec1501hsz.dtsi
 @@ -67,6 +67,9 @@
  	};
- 
+
  	soc {
 +		ecs: ecs@4000fc00 {
 +			reg = <0x4000fc00 0x200>;
@@ -4575,7 +4575,7 @@ index 16e6e63194..733a604de5 100644
  		pcr: pcr@40080100 {
  			reg = <0x40080100 0x100 0x4000a400 0x100>;
  			reg-names = "pcrr", "vbatr";
--- 
+--
 2.34.1
 
 
@@ -4603,7 +4603,7 @@ index 585731dbdd..7c9285dbf3 100644
 --- a/drivers/espi/Kconfig.xec
 +++ b/drivers/espi/Kconfig.xec
 @@ -63,13 +63,17 @@ config ESPI_FLASH_BUFFER_SIZE
- 
+
  config ESPI_SAF_XEC
  	bool "XEC Microchip ESPI SAF driver"
 +	default y
@@ -4611,7 +4611,7 @@ index 585731dbdd..7c9285dbf3 100644
 +	depends on DT_HAS_MICROCHIP_XEC_ESPI_SAF_ENABLED
  	help
  	  Enable the Microchip XEC SAF ESPI driver for MEC15xx family.
- 
+
  config ESPI_SAF_XEC_V2
  	bool "XEC Microchip ESPI SAF V2 driver"
 +	default y
@@ -4619,8 +4619,8 @@ index 585731dbdd..7c9285dbf3 100644
 +	depends on DT_HAS_MICROCHIP_XEC_ESPI_SAF_V2_ENABLED
  	help
  	  Enable the Microchip XEC SAF ESPI driver for MEC172x series.
- 
--- 
+
+--
 2.34.1
 
 
@@ -4699,7 +4699,7 @@ index 8ecdf7d3be..d2e0b9b02b 100644
 @@ -12,6 +12,36 @@
  #include <zephyr/arch/cpu.h>
  #include <zephyr/arch/arm/aarch32/cortex_m/cmsis.h>
- 
+
 +
 +static uintptr_t ecs_regbase = DT_REG_ADDR(DT_NODELABEL(ecs));
 +static void configure_debug_interface(void)
@@ -4736,13 +4736,13 @@ index 8ecdf7d3be..d2e0b9b02b 100644
 @@ -25,6 +55,8 @@ static int soc_init(const struct device *dev)
  						MCHP_GPIO_CTRL_IDET_DISABLE;
  	}
- 
+
 +	configure_debug_interface();
 +
  	return 0;
  }
- 
--- 
+
+--
 2.34.1
 
 
@@ -4765,13 +4765,13 @@ index 7397ade679..905857708a 100644
 @@ -199,7 +199,7 @@ typedef int (*peci_transfer_t)(const struct device *dev, struct peci_msg *msg);
  typedef int (*peci_disable_t)(const struct device *dev);
  typedef int (*peci_enable_t)(const struct device *dev);
- 
+
 -struct peci_driver_api {
 +__subsystem struct peci_driver_api {
  	peci_config_t config;
  	peci_disable_t disable;
  	peci_enable_t enable;
--- 
+--
 2.34.1
 
 
@@ -4824,7 +4824,7 @@ index 7c62be06ba..a93e4dc83c 100644
  source "drivers/led/Kconfig.pwm"
  source "drivers/led/Kconfig.tlc59108"
 +source "drivers/led/Kconfig.xec"
- 
+
  endif # LED
 diff --git a/drivers/led/Kconfig.xec b/drivers/led/Kconfig.xec
 new file mode 100644
@@ -5172,7 +5172,7 @@ index 733a604de5..9116405c79 100644
 +		};
  	};
  };
- 
+
 diff --git a/dts/bindings/led/microchip,xec-bbled.yaml b/dts/bindings/led/microchip,xec-bbled.yaml
 new file mode 100644
 index 0000000000..563c7ecaf4
@@ -5210,7 +5210,7 @@ index 0000000000..563c7ecaf4
 +      type: array
 +      required: true
 +      description: BBLED PCR register index and bit position
--- 
+--
 2.34.1
 
 
@@ -5579,7 +5579,7 @@ index 0000000000..a1a116c0ab
 +{
 +	led_test();
 +}
--- 
+--
 2.34.1
 
 
@@ -5602,14 +5602,14 @@ index d4fa144aec..3e00e3592d 100644
 +++ b/soc/arm/microchip_mec/mec172x/soc_espi_saf_v2.h
 @@ -12,7 +12,7 @@
  #define _SOC_ESPI_SAF_H_
- 
+
  #include <stdint.h>
 -#include <sys/util.h>
 +#include <zephyr/sys/util.h>
- 
+
  #define MCHP_SAF_MAX_FLASH_DEVICES		2U
- 
--- 
+
+--
 2.34.1
 
 
@@ -5638,7 +5638,7 @@ index 601ce99c61..cf7d412171 100644
  #define PCR_XEC_REG_BASE						\
  	((struct pcr_regs *)(DT_REG_ADDR(DT_NODELABEL(pcr))))
  #define TFDP_0_XEC_REG_BASE						\
--- 
+--
 2.34.1
 
 
@@ -5671,9 +5671,9 @@ index f4d5a65301..ce0c8b17fe 100644
                              -Wno-typedef-redefinition
 +                            -Wno-deprecated-non-prototype
  )
- 
+
  check_set_compiler_property(APPEND PROPERTY warning_base -Wno-pointer-sign)
--- 
+--
 2.34.1
 
 
@@ -5715,28 +5715,28 @@ index 5cba6ee3a8..b8aded7afe 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -391,7 +391,8 @@ zephyr_compile_options(${COMPILER_OPT_AS_LIST})
- 
+
  # TODO: Include arch compiler options at this point.
- 
+
 -if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
 +if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" AND
 +   NOT CMAKE_C_COMPILER_ID STREQUAL "IntelLLVM")
    # GCC assumed
    zephyr_cc_option(-fno-reorder-functions)
- 
+
 diff --git a/cmake/bintools/oneApi/target.cmake b/cmake/bintools/oneApi/target.cmake
 index 4b69900f06..488e2345e9 100644
 --- a/cmake/bintools/oneApi/target.cmake
 +++ b/cmake/bintools/oneApi/target.cmake
 @@ -1,12 +1,18 @@
  # SPDX-License-Identifier: Apache-2.0
- 
+
  if(DEFINED TOOLCHAIN_HOME)
 -  set(find_program_clang_args PATHS ${TOOLCHAIN_HOME} ${ONEAPI_PYTHON_PATH} NO_DEFAULT_PATH)
 +  set(find_program_clang_args PATHS ${TOOLCHAIN_HOME} ${ONEAPI_LLVM_BIN_PATH} NO_DEFAULT_PATH)
    set(find_program_binutils_args PATHS ${TOOLCHAIN_HOME} )
  endif()
- 
+
 +find_package(oneApi 2023.0.0 REQUIRED)
 +
  find_program(CMAKE_AR      llvm-ar      ${find_program_clang_args}   )
@@ -5790,16 +5790,16 @@ index c72a7a873d..d22176ff22 100644
 -  set(ONEAPI_PYTHON_PATH ${ONEAPI_TOOLCHAIN_PATH}/intelpython/latest/bin)
 +  set(ONEAPI_LLVM_BIN_PATH ${ONEAPI_TOOLCHAIN_PATH}/compiler/latest/${system}/bin-llvm)
  endif()
- 
+
  set(ONEAPI_TOOLCHAIN_PATH ${ONEAPI_TOOLCHAIN_PATH} CACHE PATH "oneApi install directory")
 @@ -43,4 +43,6 @@ elseif(system STREQUAL "windows")
    add_link_options(--target=${triple})
  endif()
- 
+
 +set(TOOLCHAIN_HAS_NEWLIB OFF CACHE BOOL "True if toolchain supports newlib")
 +
  message(STATUS "Found toolchain: host (clang/ld)")
--- 
+--
 2.34.1
 
 
@@ -5822,15 +5822,15 @@ index b8aded7afe..4f4408603e 100644
 +++ b/CMakeLists.txt
 @@ -392,7 +392,8 @@ zephyr_compile_options(${COMPILER_OPT_AS_LIST})
  # TODO: Include arch compiler options at this point.
- 
+
  if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" AND
 -   NOT CMAKE_C_COMPILER_ID STREQUAL "IntelLLVM")
 +   NOT CMAKE_C_COMPILER_ID STREQUAL "IntelLLVM" AND
 +   NOT CMAKE_C_COMPILER_ID STREQUAL "ARMClang")
    # GCC assumed
    zephyr_cc_option(-fno-reorder-functions)
- 
--- 
+
+--
 2.34.1
 
 
@@ -5867,7 +5867,7 @@ index 0515e31e83..1be0863ab0 100644
 +++ b/drivers/console/uart_console.c
 @@ -490,7 +490,7 @@ static void uart_console_isr(const struct device *unused, void *user_data)
  		}
- 
+
  		/* Handle special control characters */
 -		if (!isprint(byte)) {
 +		if (isprint(byte) == 0) {
@@ -5902,7 +5902,7 @@ index d07681dd0e..0a14e54ef4 100644
 +++ b/subsys/logging/log_output.c
 @@ -393,7 +393,7 @@ static void hexdump_line_print(const struct log_output *output,
  			unsigned char c = (unsigned char)data[i];
- 
+
  			print_formatted(output, "%c",
 -			      isprint((int)c) ? c : '.');
 +			      isprint((int)c) != 0 ? c : '.');
@@ -5915,7 +5915,7 @@ index c4d1177b44..2a5026a0a4 100644
 +++ b/subsys/shell/shell.c
 @@ -1049,7 +1049,7 @@ static void state_collect(const struct shell *shell)
  				break;
- 
+
  			default:
 -				if (isprint((int) data)) {
 +				if (isprint((int) data) != 0) {
@@ -5924,7 +5924,7 @@ index c4d1177b44..2a5026a0a4 100644
  				} else if (z_flag_echo_get(shell)) {
 @@ -1555,7 +1555,7 @@ void shell_hexdump_line(const struct shell *shell, unsigned int offset,
  			char c = data[i];
- 
+
  			shell_fprintf(shell, SHELL_NORMAL, "%c",
 -				      isprint((int)c) ? c : '.');
 +				      isprint((int)c) != 0 ? c : '.');
@@ -5938,7 +5938,7 @@ index cfc046927c..647f26abf0 100644
 @@ -48,7 +48,7 @@ static void uart_isr(const struct device *dev, void *user_data)
  			length = tracing_cmd_buffer_alloc(&cmd);
  		}
- 
+
 -		if (!isprint(byte)) {
 +		if (isprint(byte) == 0) {
  			if (byte == '\r') {
@@ -5949,7 +5949,7 @@ index abe3f38d28..0e747ef7b4 100644
 --- a/tests/lib/c_lib/src/main.c
 +++ b/tests/lib/c_lib/src/main.c
 @@ -479,7 +479,7 @@ ZTEST(test_c_lib, test_checktype)
- 
+
  	ptr = buf;
  	for (int i = 0; i < 128; i++) {
 -		if (isprint(i)) {
@@ -5957,7 +5957,7 @@ index abe3f38d28..0e747ef7b4 100644
  			*ptr++ = i;
  		}
  	}
--- 
+--
 2.34.1
 
 
@@ -5987,7 +5987,7 @@ index 48b5a772e5..52063bad91 100644
 @@ -14,9 +14,4 @@
  		__log_const_end = .;
  	} GROUP_ROM_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
- 
+
 -	SECTION_DATA_PROLOGUE(log_backends_sections,,)
 -	{
 -		__log_backends_start = .;
@@ -6002,7 +6002,7 @@ index 721d160d68..71c770328b 100644
 @@ -94,9 +94,6 @@ struct log_backend {
  	bool autostart;
  };
- 
+
 -extern const struct log_backend __log_backends_start[];
 -extern const struct log_backend __log_backends_end[];
 -
@@ -6020,7 +6020,7 @@ index 721d160d68..71c770328b 100644
 +
 +	return backend;
  }
- 
+
  /**
 @@ -256,7 +257,11 @@ static inline const struct log_backend *log_backend_get(uint32_t idx)
   */
@@ -6033,7 +6033,7 @@ index 721d160d68..71c770328b 100644
 +
 +	return cnt;
  }
- 
+
  /**
 diff --git a/subsys/logging/log_cmds.c b/subsys/logging/log_cmds.c
 index 2d9333fade..80fce16c02 100644
@@ -6045,7 +6045,7 @@ index 2d9333fade..80fce16c02 100644
  {
 -	const struct log_backend *backend;
  	size_t slen = strlen(name);
- 
+
 -	for (int i = 0; i < log_backend_count_get(); i++) {
 -		backend = log_backend_get(i);
 +	STRUCT_SECTION_FOREACH(log_backend, backend) {
@@ -6070,7 +6070,7 @@ index 2d9333fade..80fce16c02 100644
 @@ -410,9 +402,7 @@ static void backend_name_get(size_t idx, struct shell_static_entry *entry)
  	entry->subcmd = &sub_log_backend;
  	entry->syntax  = NULL;
- 
+
 -	if (idx < log_backend_count_get()) {
 -		const struct log_backend *backend = log_backend_get(idx);
 -
@@ -6083,38 +6083,38 @@ index 6c7f906dae..46f4770d0c 100644
 --- a/subsys/logging/log_core.c
 +++ b/subsys/logging/log_core.c
 @@ -159,11 +159,9 @@ static void z_log_msg_post_finalize(void)
- 
+
  const struct log_backend *log_format_set_all_active_backends(size_t log_type)
  {
 -	const struct log_backend *backend;
  	const struct log_backend *failed_backend = NULL;
- 
+
 -	for (int i = 0; i < log_backend_count_get(); i++) {
 -		backend = log_backend_get(i);
 +	STRUCT_SECTION_FOREACH(log_backend, backend) {
  		if (log_backend_is_active(backend)) {
  			int retCode = log_backend_format_set(backend, log_type);
- 
+
 @@ -262,16 +260,15 @@ static uint32_t z_log_init(bool blocking, bool can_sleep)
  	}
- 
+
  	__ASSERT_NO_MSG(log_backend_count_get() < LOG_FILTERS_NUM_OF_SLOTS);
 -	int i;
- 
+
  	if (atomic_inc(&initialized) != 0) {
  		return 0;
  	}
- 
+
 -	/* Assign ids to backends. */
 -	for (i = 0; i < log_backend_count_get(); i++) {
 -		const struct log_backend *backend = log_backend_get(i);
 +	int i = 0;
- 
+
 +	/* Assign ids to backends. */
 +	STRUCT_SECTION_FOREACH(log_backend, backend) {
  		if (backend->autostart) {
  			log_backend_init(backend);
- 
+
 @@ -285,6 +282,8 @@ static uint32_t z_log_init(bool blocking, bool can_sleep)
  			} else {
  				mask |= BIT(i);
@@ -6123,9 +6123,9 @@ index 6c7f906dae..46f4770d0c 100644
 +			i++;
  		}
  	}
- 
+
 @@ -346,8 +345,6 @@ int log_set_timestamp_func(log_timestamp_get_t timestamp_getter, uint32_t freq)
- 
+
  void z_impl_log_panic(void)
  {
 -	struct log_backend const *backend;
@@ -6136,7 +6136,7 @@ index 6c7f906dae..46f4770d0c 100644
 @@ -364,9 +361,7 @@ void z_impl_log_panic(void)
  		}
  	}
- 
+
 -	for (int i = 0; i < log_backend_count_get(); i++) {
 -		backend = log_backend_get(i);
 -
@@ -6145,7 +6145,7 @@ index 6c7f906dae..46f4770d0c 100644
  			log_backend_panic(backend);
  		}
 @@ -425,10 +420,7 @@ static bool msg_filter_check(struct log_backend const *backend,
- 
+
  static void msg_process(union log_msg_generic *msg)
  {
 -	struct log_backend const *backend;
@@ -6159,7 +6159,7 @@ index 6c7f906dae..46f4770d0c 100644
 @@ -440,9 +432,7 @@ void dropped_notify(void)
  {
  	uint32_t dropped = z_log_dropped_read_and_clear();
- 
+
 -	for (int i = 0; i < log_backend_count_get(); i++) {
 -		struct log_backend const *backend = log_backend_get(i);
 -
@@ -6184,12 +6184,12 @@ index fc85c267f9..62278841c5 100644
 +++ b/subsys/logging/log_mgmt.c
 @@ -104,12 +104,10 @@ uint32_t z_impl_log_filter_set(struct log_backend const *const backend,
  		uint32_t *filters = z_log_dynamic_filters_get(source_id);
- 
+
  		if (backend == NULL) {
 -			struct log_backend const *iter_backend;
  			uint32_t max = 0U;
  			uint32_t current;
- 
+
 -			for (int i = 0; i < log_backend_count_get(); i++) {
 -				iter_backend = log_backend_get(i);
 +			STRUCT_SECTION_FOREACH(log_backend, iter_backend) {
@@ -6197,7 +6197,7 @@ index fc85c267f9..62278841c5 100644
  							 domain_id,
  							 source_id, level);
 @@ -174,14 +172,12 @@ static void backend_filter_set(struct log_backend const *const backend,
- 
+
  const struct log_backend *log_backend_get_by_name(const char *backend_name)
  {
 -	const struct log_backend *ptr = __log_backends_start;
@@ -6214,14 +6214,14 @@ index fc85c267f9..62278841c5 100644
 +
  	return NULL;
  }
- 
+
 diff --git a/tests/subsys/logging/log_api/src/main.c b/tests/subsys/logging/log_api/src/main.c
 index df5c1c3c15..d512dd8dfc 100644
 --- a/tests/subsys/logging/log_api/src/main.c
 +++ b/tests/subsys/logging/log_api/src/main.c
 @@ -127,7 +127,10 @@ static void process_and_validate(bool backend2_enable, bool panic)
  	mock_log_frontend_validate(panic);
- 
+
  	if (NO_BACKENDS) {
 -		zassert_equal(log_backend_count_get(), 0);
 +		int cnt;
@@ -6230,7 +6230,7 @@ index df5c1c3c15..d512dd8dfc 100644
 +		zassert_equal(cnt, 0);
  		return;
  	}
- 
+
 diff --git a/tests/subsys/logging/log_backend_init/src/main.c b/tests/subsys/logging/log_backend_init/src/main.c
 index 31fa813adb..5704fa164f 100644
 --- a/tests/subsys/logging/log_backend_init/src/main.c
@@ -6261,7 +6261,7 @@ index 8cd09581ac..0e26ee88c9 100644
 +++ b/tests/subsys/logging/log_core_additional/src/log_test.c
 @@ -238,10 +238,7 @@ ZTEST(test_log_core_additional, test_log_early_logging)
  		log_init();
- 
+
  		/* deactivate other backends */
 -		const struct log_backend *backend;
 -
@@ -6272,7 +6272,7 @@ index 8cd09581ac..0e26ee88c9 100644
  				log_backend_deactivate(backend);
  			}
 @@ -309,10 +306,7 @@ ZTEST(test_log_core_additional, test_log_timestamping)
- 
+
  	log_init();
  	/* deactivate all other backend */
 -	const struct log_backend *backend;
@@ -6282,7 +6282,7 @@ index 8cd09581ac..0e26ee88c9 100644
 +	STRUCT_SECTION_FOREACH(log_backend, backend) {
  		log_backend_deactivate(backend);
  	}
- 
+
 @@ -356,18 +350,19 @@ ZTEST(test_log_core_additional, test_log_timestamping)
  #define UART_BACKEND "log_backend_uart"
  ZTEST(test_log_core_additional, test_multiple_backends)
@@ -6296,18 +6296,18 @@ index 8cd09581ac..0e26ee88c9 100644
 +	STRUCT_SECTION_COUNT(log_backend, &cnt);
 +	zassert_true((cnt >= 2),
  		     "There is no multi backends");
- 
+
  	if (IS_ENABLED(CONFIG_LOG_BACKEND_UART)) {
  		bool have_uart = false;
 -		struct log_backend const *backend;
- 
+
 -		for (int i = 0; i < log_backend_count_get(); i++) {
 -			backend = log_backend_get(i);
 +		STRUCT_SECTION_FOREACH(log_backend, backend) {
  			if (strcmp(backend->name, UART_BACKEND) == 0) {
  				have_uart = true;
  			}
--- 
+--
 2.34.1
 
 
@@ -6333,7 +6333,7 @@ index cac599aaa4..b1b77d0230 100644
 @@ -35,8 +35,6 @@ zephyr_linker_section_configure(SECTION initshell
  zephyr_linker_section(NAME log_dynamic GROUP DATA_REGION NOINPUT)
  zephyr_linker_section_configure(SECTION log_dynamic KEEP INPUT ".log_dynamic_*")
- 
+
 -zephyr_iterable_section(NAME _static_thread_data GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
 -
  if(CONFIG_USERSPACE)
@@ -6349,7 +6349,7 @@ index 0d267fb362..4a9831eb18 100644
  zephyr_linker_section_configure(SECTION device_handles INPUT .__device_handles_pass2* KEEP SORT NAME PASS NOT LINKER_DEVICE_HANDLES_PASS1)
 +
 +zephyr_iterable_section(NAME _static_thread_data KVMA RAM_REGION GROUP RODATA_REGION SUBALIGN 4)
--- 
+--
 2.34.1
 
 
@@ -6376,7 +6376,7 @@ index b1b77d0230..2a5c9c0afa 100644
  zephyr_iterable_section(NAME k_queue GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
  zephyr_iterable_section(NAME k_condvar GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
 +zephyr_iterable_section(NAME k_event GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
- 
+
  zephyr_linker_section(NAME _net_buf_pool_area GROUP DATA_REGION NOINPUT ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
  zephyr_linker_section_configure(SECTION _net_buf_pool_area
 @@ -110,3 +111,36 @@ if(CONFIG_ZTEST_NEW_API)
@@ -6416,7 +6416,7 @@ index b1b77d0230..2a5c9c0afa 100644
 +  zephyr_iterable_section(NAME usbh_contex GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
 +  zephyr_iterable_section(NAME usbh_class_data GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
 +endif()
--- 
+--
 2.34.1
 
 
@@ -6440,7 +6440,7 @@ index 4a9831eb18..b129bb7787 100644
 +++ b/cmake/linker_script/common/common-rom.cmake
 @@ -183,3 +183,23 @@ zephyr_linker_section_configure(SECTION device_handles INPUT .__device_handles_p
  zephyr_linker_section_configure(SECTION device_handles INPUT .__device_handles_pass2* KEEP SORT NAME PASS NOT LINKER_DEVICE_HANDLES_PASS1)
- 
+
  zephyr_iterable_section(NAME _static_thread_data KVMA RAM_REGION GROUP RODATA_REGION SUBALIGN 4)
 +
 +if (CONFIG_BT_IAS)
@@ -6462,7 +6462,7 @@ index 4a9831eb18..b129bb7787 100644
 +if(CONFIG_USBD_MSC_CLASS)
 +  zephyr_iterable_section(NAME usbd_msc_lun KVMA RAM_REGION GROUP RODATA_REGION SUBALIGN 4)
 +endif()
--- 
+--
 2.34.1
 
 
@@ -6490,22 +6490,22 @@ index b129bb7787..766465777a 100644
 @@ -162,9 +162,6 @@ zephyr_linker_section_configure(SECTION log_strings INPUT ".log_strings*" KEEP S
  zephyr_linker_section(NAME log_const KVMA RAM_REGION GROUP RODATA_REGION NOINPUT ${XIP_ALIGN_WITH_INPUT})
  zephyr_linker_section_configure(SECTION log_const INPUT ".log_const_*" KEEP SORT NAME)
- 
+
 -zephyr_linker_section(NAME log_backends KVMA RAM_REGION GROUP RODATA_REGION NOINPUT ${XIP_ALIGN_WITH_INPUT})
 -zephyr_linker_section_configure(SECTION log_backends INPUT ".log_backends.*" KEEP)
 -
  zephyr_iterable_section(NAME shell KVMA RAM_REGION GROUP RODATA_REGION SUBALIGN 4)
- 
+
  zephyr_linker_section(NAME shell_root_cmds KVMA RAM_REGION GROUP RODATA_REGION NOINPUT ${XIP_ALIGN_WITH_INPUT})
 @@ -190,6 +187,7 @@ endif()
- 
+
  if (CONFIG_LOG)
    zephyr_iterable_section(NAME log_link KVMA RAM_REGION GROUP RODATA_REGION SUBALIGN 4)
 +  zephyr_iterable_section(NAME log_backend KVMA RAM_REGION GROUP RODATA_REGION SUBALIGN 4)
  endif()
- 
+
  if (CONFIG_HTTP_SERVER)
--- 
+--
 2.34.1
 
 
@@ -6546,8 +6546,8 @@ index 54ddefda04..a431974612 100644
 +    list(APPEND TOOLCHAIN_C_FLAGS   -mfloat-abi=soft)
    endif()
  endif()
- 
--- 
+
+--
 2.34.1
 
 
@@ -6578,7 +6578,7 @@ index 93d6332294..a5ae5eb565 100644
 @@ -43,6 +43,19 @@ config INTC_INIT_PRIORITY
  	help
  	  Interrupt controller device initialization priority.
- 
+
 +if MCHP_ECIA_XEC
 +
 +config XEC_GIRQ_INIT_PRIORITY
@@ -6608,6 +6608,6 @@ index 5a3a05953d..789c635b6a 100644
  		 NULL);							\
  									\
  	static int xec_girq_init_##n(const struct device *dev)		\
--- 
+--
 2.34.1
 

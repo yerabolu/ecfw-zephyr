@@ -8,7 +8,7 @@
 
 west:
   url: https://github.com/zephyrproject-rtos/west
-  version: v1.0.0
+  version: v0.7.2
 
 manifest:
   defaults:
@@ -23,13 +23,15 @@ manifest:
   # The list of dependencies
   #
   projects:
-    # Open source branch uses official Zephyr tree
+    # EC team zephyr RTOS fork
+    # This repo sometimes contains delta changes on top of an official
+    # Zephyr RTOS public release
     - name: zephyr_public
       repo-path: zephyr.git
       path: ecfwwork/zephyr_fork
       remote: zephyrproject
-      revision: f3fdb1f96fd8a9498ce0cd7a332dc6972e213a19
-      clone-depth: 1
+      revision: d4d20c58260d1df9533a2253762c384031dc721b
+      #clone-depth: 1
       west-commands: scripts/west-commands.yml
 
     - name: cmsis

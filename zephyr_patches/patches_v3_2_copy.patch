@@ -1,0 +1,281 @@
+From a105a831349c63e02e41c8c33b7336545439fc07 Mon Sep 17 00:00:00 2001
+From: Venkataramana Kotakonda <venkataramana.kotakonda@intel.com>
+Date: Mon, 30 Mar 2020 10:32:05 -0400
+Subject: [PATCH 01/03] drivers: espi: Clear virtual wire interrupt before
+ calling handler
+
+Clearing virtual wire interrupt after calling handler may cause next
+interrupt miss if the same virtual wire changes due to action in handler.
+As the interrupt source is read from register, it can be cleared before
+calling handler to avoid next interrupt miss due to action/delay in the
+callback handler.
+
+Signed-off-by: Venkataramana Kotakonda <venkataramana.kotakonda@intel.com>
+---
+ drivers/espi/espi_mchp_xec.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/espi/espi_mchp_xec.c b/drivers/espi/espi_mchp_xec.c
+index f04c910fe1..1a3c65d9f3 100644
+--- a/drivers/espi/espi_mchp_xec.c
++++ b/drivers/espi/espi_mchp_xec.c
+@@ -1371,6 +1371,7 @@ static void espi_xec_vw_isr(const struct device *dev)
+ 	uint32_t girq_result;
+
+ 	girq_result = MCHP_GIRQ_RESULT(config->vw_girq_ids[0]);
++	MCHP_GIRQ_SRC(config->vw_girq_ids[0]) = girq_result;
+
+ 	for (int i = 0; i < m2s_vwires_isr_cnt; i++) {
+ 		struct espi_isr entry = m2s_vwires_isr[i];
+@@ -1381,8 +1382,6 @@ static void espi_xec_vw_isr(const struct device *dev)
+ 			}
+ 		}
+ 	}
+-
+-	REG32(MCHP_GIRQ_SRC_ADDR(config->vw_girq_ids[0])) = girq_result;
+ }
+
+ #if DT_INST_PROP_HAS_IDX(0, vw_girqs, 1)
+--
+2.34.1
+
+From 17ec05308995ff5bd864ef7a0a200094021642e4 Mon Sep 17 00:00:00 2001
+From: Kunal Shah <kunal.a.shah@intel.com>
+Date: Wed, 3 Mar 2021 17:06:31 +0530
+Subject: [PATCH 02/03] espi:driver: espi ltr support
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+LTR stands for “Latency Tolerance Report”.
+This feature allows the EC slave to declare an upper bound on
+latency through the chipset. The effect of setting a Latency Tolerance
+is to restrict the low-power states that the chipset may enter.
+
+LTR needs to be programmed only after Bus Mastering is enabled by eSPI master
+using peripheral configuration message.
+
+This patch will send LTR message to the eSPI Master and also provides callback
+on reception of bus master enabling from espi master.
+
+Signed-off-by: Kunal Shah <kunal.a.shah@intel.com>
+---
+ drivers/espi/espi_mchp_xec.c  | 38 ++++++++++++++++++++--
+ include/zephyr/drivers/espi.h | 60 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 96 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/espi/espi_mchp_xec.c b/drivers/espi/espi_mchp_xec.c
+index 1a3c65d9f3..027c1b1033 100644
+--- a/drivers/espi/espi_mchp_xec.c
++++ b/drivers/espi/espi_mchp_xec.c
+@@ -434,7 +434,26 @@ static int espi_xec_write_lpc_request(const struct device *dev,
+
+ 	return 0;
+ }
++static int espi_xec_send_ltr(const struct device *dev, struct ltr_cfg_pkt *req)
++{
++	if (!(ESPI_PC_REGS->PC_STATUS & MCHP_ESPI_PC_STS_BM_EN)) {
++		return -ENOTSUP;
++	}
++
++	if (req->ltr_req) {
++		ESPI_LTR_REGS->LTR_MSG = MCHP_ESPI_LTR_MSG_REQ_VAL |
++				(req->latency << MCHP_ESPI_LTR_MSG_VAL_POS) |
++				(req->ltr_scale << MCHP_ESPI_LTR_MSG_SC_POS);
++	} else {
++		/* set infinite latency tolrated */
++		ESPI_LTR_REGS->LTR_MSG = MCHP_ESPI_LTR_MSG_REQ_INF;
++	}
+
++	/* Send LTR Packet */
++	ESPI_LTR_REGS->LTR_CTRL = MCHP_ESPI_LTR_CTRL_START;
++
++	return 0;
++}
+ static int espi_xec_send_vwire(const struct device *dev,
+ 			       enum espi_vwire_signal signal, uint8_t level)
+ {
+@@ -965,6 +984,10 @@ static void setup_espi_io_config(const struct device *dev,
+ static void espi_pc_isr(const struct device *dev)
+ {
+ 	uint32_t status = ESPI_PC_REGS->PC_STATUS;
++	struct espi_event evt = { .evt_type = ESPI_BUS_EVENT_CHANNEL_READY,
++				  .evt_details = ESPI_CHANNEL_PERIPHERAL,
++				  .evt_data = 0 };
++	struct espi_xec_data *data = (struct espi_xec_data *)(dev->data);
+
+ 	if (status & MCHP_ESPI_PC_STS_EN_CHG) {
+ 		if (status & MCHP_ESPI_PC_STS_EN) {
+@@ -972,6 +995,13 @@ static void espi_pc_isr(const struct device *dev)
+ 		}
+
+ 		ESPI_PC_REGS->PC_STATUS = MCHP_ESPI_PC_STS_EN_CHG;
++	} else if (status & MCHP_ESPI_PC_STS_BM_EN_CHG) {
++		if (status & MCHP_ESPI_PC_STS_BM_EN) {
++			evt.evt_data = ESPI_PC_EVT_BUS_MASTER_ENABLE;
++			espi_send_callbacks(&data->callbacks, dev, evt);
++		}
++
++		ESPI_PC_REGS->PC_STATUS = MCHP_ESPI_PC_STS_BM_EN_CHG;
+ 	}
+ }
+
+@@ -1453,6 +1483,7 @@ static const struct espi_driver_api espi_xec_driver_api = {
+ 	.manage_callback = espi_xec_manage_callback,
+ 	.read_lpc_request = espi_xec_read_lpc_request,
+ 	.write_lpc_request = espi_xec_write_lpc_request,
++	.send_ltr = espi_xec_send_ltr,
+ };
+
+ static struct espi_xec_data espi_xec_data;
+@@ -1526,8 +1557,11 @@ static int espi_xec_init(const struct device *dev)
+ 	/* Clear reset interrupt status and enable interrupts */
+ 	ESPI_CAP_REGS->ERST_STS = MCHP_ESPI_RST_ISTS;
+ 	ESPI_CAP_REGS->ERST_IEN |= MCHP_ESPI_RST_IEN;
+-	ESPI_PC_REGS->PC_STATUS = MCHP_ESPI_PC_STS_EN_CHG;
+-	ESPI_PC_REGS->PC_IEN |= MCHP_ESPI_PC_IEN_EN_CHG;
++	ESPI_PC_REGS->PC_STATUS |= MCHP_ESPI_PC_STS_EN_CHG |
++				 MCHP_ESPI_PC_STS_BM_EN_CHG;
++	ESPI_PC_REGS->PC_IEN |= MCHP_ESPI_PC_IEN_EN_CHG |
++				MCHP_ESPI_PC_IEN_BM_EN_CHG;
++
+
+ 	/* Enable VWires interrupts */
+ 	for (int i = 0; i < sizeof(vw_wires_int_en); i++) {
+diff --git a/include/zephyr/drivers/espi.h b/include/zephyr/drivers/espi.h
+index e16ebca5ab..6a37b7ff65 100644
+--- a/include/zephyr/drivers/espi.h
++++ b/include/zephyr/drivers/espi.h
+@@ -115,6 +115,20 @@ enum espi_bus_event {
+ 	ESPI_BUS_PERIPHERAL_NOTIFICATION    = BIT(4),
+ };
+
++/**
++ * @brief eSPI LTR Scale
++ *
++ * eSPI LTR scale value used for LTR register programming
++ */
++enum espi_ltr_scale {
++	ESPI_LTR_SCALE_1NSEC = 0,
++	ESPI_LTR_SCALE_32NSEC = BIT(0),
++	ESPI_LTR_SCALE_1024NSEC = BIT(1),
++	ESPI_LTR_SCALE_32USEC = BIT(0) | BIT(1),
++	ESPI_LTR_SCALE_1MSEC = BIT(2),
++	ESPI_LTR_SCALE_33MSEC = BIT(0) | BIT(2),
++};
++
+ /**
+  * @brief eSPI peripheral channel events.
+  *
+@@ -359,6 +373,18 @@ struct espi_flash_packet {
+ 	uint16_t len;
+ };
+
++/**
++ * @brief eSPI LTR configuration parameters
++ */
++struct ltr_cfg_pkt {
++	/** Latency scale */
++	enum espi_ltr_scale ltr_scale;
++	/** Latency value in unit of scale */
++	uint16_t latency;
++	/** LTR Required bit 1-ltr as per scale, 0 -Infinite latency */
++	uint8_t ltr_req;
++};
++
+ struct espi_callback;
+
+ /**
+@@ -421,6 +447,8 @@ typedef int (*espi_api_lpc_read_request)(const struct device *dev,
+ typedef int (*espi_api_lpc_write_request)(const struct device *dev,
+ 					  enum lpc_peripheral_opcode op,
+ 					  uint32_t *data);
++typedef int (*espi_api_ltr_write_request)(const struct device *dev,
++					  struct ltr_cfg_pkt *req);
+ /* Logical Channel 1 APIs */
+ typedef int (*espi_api_send_vwire)(const struct device *dev,
+ 				   enum espi_vwire_signal vw,
+@@ -452,6 +480,7 @@ __subsystem struct espi_driver_api {
+ 	espi_api_write_request write_request;
+ 	espi_api_lpc_read_request read_lpc_request;
+ 	espi_api_lpc_write_request write_lpc_request;
++	espi_api_ltr_write_request send_ltr;
+ 	espi_api_send_vwire send_vwire;
+ 	espi_api_receive_vwire receive_vwire;
+ 	espi_api_send_oob send_oob;
+@@ -674,6 +703,37 @@ static inline int z_impl_espi_write_lpc_request(const struct device *dev,
+ 	return api->write_lpc_request(dev, op, data);
+ }
+
++
++/**
++ * @brief Send LTR request to eSPI host which generates an eSPI transaction.
++ *
++ * This routine provides a generic interface to send ltr value to eSPI host
++ * which triggers an eSPI transaction. The eSPI packet is assembled by the
++ * hardware block.
++ *
++ * @param dev Pointer to the device structure for the driver instance.
++ * @param req Address of a structure representing LTR configuration request.
++ *
++ * @retval 0 If successful.
++ * @retval -ENOTSUP espi master has not enabled LTR.
++ */
++__syscall int espi_send_ltr(const struct device *dev,
++			    struct ltr_cfg_pkt *req);
++
++static inline int z_impl_espi_send_ltr(const struct device *dev,
++				       struct ltr_cfg_pkt *req)
++{
++	const struct espi_driver_api *api =
++		(const struct espi_driver_api *)dev->api;
++
++	if (!api->send_ltr) {
++		return -ENOTSUP;
++	}
++
++	return api->send_ltr(dev, req);
++}
++
++
+ /**
+  * @brief Sends system/platform signal as a virtual wire packet.
+  *
+--
+2.34.1
+
+From 65a5a34610a37eb0088a54bd0c276cca1b87a303 Mon Sep 17 00:00:00 2001
+From: "Chintha, Ramakrishna" <ramakrishna.chintha@intel.com>
+Date: Tue, 13 Sep 2022 12:19:49 +0530
+Subject: [PATCH 03/03] boards: mec172xmodular_assy6930: change drivestrength
+ and mode
+
+Changing the mode to Quad from Dual and spi drivestrength to 8mA
+This changes are required because of the HW limitation,
+With Dual and 4mA Code fetch is failing in SAF mode.
+
+Signed-off-by: Chintha, Ramakrishna <ramakrishna.chintha@intel.com>
+---
+ boards/arm/mec172xmodular_assy6930/support/spi_cfg_4MBit.txt | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+ mode change 100644 => 100755 boards/arm/mec172xmodular_assy6930/support/spi_cfg_4MBit.txt
+
+diff --git a/boards/arm/mec172xmodular_assy6930/support/spi_cfg_4MBit.txt b/boards/arm/mec172xmodular_assy6930/support/spi_cfg_4MBit.txt
+old mode 100644
+new mode 100755
+index 9b0d207282..e7afca5d2b
+--- a/boards/arm/mec172xmodular_assy6930/support/spi_cfg_4MBit.txt
++++ b/boards/arm/mec172xmodular_assy6930/support/spi_cfg_4MBit.txt
+@@ -16,8 +16,8 @@ BoardID = 0
+ [IMAGE "0"]
+ ImageLocation = 0x100
+ SpiFreqMHz = 24
+-SpiReadCommand = Dual
+-SpiDriveStrength = 4
++SpiReadCommand = Quad
++SpiDriveStrength = 8
+ SpiSlewFast = false
+ SpiSignalControl = 0x00
+ FwBinFile = zephyr.bin
+--
+2.34.1

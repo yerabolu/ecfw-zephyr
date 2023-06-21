@@ -17,6 +17,8 @@
 
 LOG_MODULE_DECLARE(board, CONFIG_BOARD_LOG_LEVEL);
 
+#define REG32(a)            (*((volatile uint32_t *)(uintptr_t)(a)))
+
 uint8_t platformskutype;
 uint8_t pd_i2c_addr_set;
 
@@ -159,6 +161,11 @@ void update_platform_sku_type(void)
 int board_init(void)
 {
 	int ret;
+
+	uint32_t rom_flags = REG32(0x127300+0xF8);
+	LOG_WRN("ROM flags 0x08%x", rom_flags);
+	LOG_WRN("TAG0 load sts %d", (rom_flags & (1<<30)));
+	LOG_WRN("load failure %d", (rom_flags & (1<<31)));
 
 	bgpo_disable();
 
